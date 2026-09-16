@@ -6,62 +6,115 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 import boto3
+import psycopg2
 from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+# ==================================================
+# Logging
+# ==================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s"
+)
+
 logger = logging.getLogger(__name__)
+
+
+# ==================================================
+# Environment Variables
+# ==================================================
 
 AWS_REGION = os.environ["AWS_REGION"]
 DB_SECRET_ARN = os.environ["DB_SECRET_ARN"]
+
+DB_HOST = os.environ["DB_HOST"]
+DB_NAME = os.environ["DB_NAME"]
+DB_PORT = int(os.getenv("DB_PORT", "5432"))
+
 APP_PORT = int(os.getenv("APP_PORT", "5000"))
+
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
+
+
+# ==================================================
+# Flask Setup
+# ==================================================
 
 app = Flask(__name__)
 
-CORS(
-    app,
-    resources={
-        r"/*": {
-            "origins": ALLOWED_ORIGINS.split(",") if ALLOWED_ORIGINS != "*" else "*"
+if ALLOWED_ORIGINS == "*":
+    CORS(app)
+else:
+    CORS(
+        app,
+        resources={
+            r"/*": {
+                "origins": [origin.strip() for origin in ALLOWED_ORIGINS.split(",")]
+            }
         }
-    }
-)
+    )
 
-# Global pool pointer
-db_pool = None
+
+# ==================================================
+# Secrets Manager
+# ==================================================
 
 def get_db_secret():
-    client = boto3.client("secretsmanager", region_name=AWS_REGION)
-    response = client.get_secret_value(SecretId=DB_SECRET_ARN)
+    client = boto3.client(
+        "secretsmanager",
+        region_name=AWS_REGION
+    )
+
+    response = client.get_secret_value(
+        SecretId=DB_SECRET_ARN
+    )
+
     return json.loads(response["SecretString"])
 
-def get_connection():
+
+# ==================================================
+# DB Connection Pool
+# ==================================================
+
+db_pool = None
+
+
+def initialize_pool():
     global db_pool
-    # Lazy initialization happens inside the running worker process, NOT at script boot
-    if db_pool is None:
-        logger.info("Initializing database connection pool for this worker process...")
-        secret = get_db_secret()
-        db_pool = SimpleConnectionPool(
-            minconn=1,
-            maxconn=20,
-            host=secret["host"],
-            port=secret["port"],
-            database=secret["dbname"],
-            user=secret["username"],
-            password=secret["password"]
-        )
+
+    secret = get_db_secret()
+
+    db_pool = SimpleConnectionPool(
+        minconn=1,
+        maxconn=20,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=secret["username"],
+        password=secret["password"]
+    )
+
+    logger.info("Database connection pool initialized")
+
+
+def get_connection():
     return db_pool.getconn()
 
-def release_connection(conn):
-    if db_pool:
-        db_pool.putconn(conn)
 
-# Safely handle table creation inside an app context setup
-@app.before_all_requests
-def setup_database_schema():
-    """Runs once per worker process before handling its first request."""
+def release_connection(conn):
+    db_pool.putconn(conn)
+
+
+# ==================================================
+# Create Test Table
+# ==================================================
+
+def create_table_if_not_exists():
     conn = get_connection()
+
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -72,42 +125,268 @@ def setup_database_schema():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+
             conn.commit()
-        logger.info("Database schema verified safely within worker process context.")
-    except Exception as e:
-        conn.rollback() # Crucial rollback
-        logger.error(f"Failed to verify schema: {e}")
-        raise e
+
+        logger.info("test_items table verified")
+
     finally:
         release_connection(conn)
 
-# Example of a fully fixed CRUD endpoint with Error Handling and Rollbacks
+
+# ==================================================
+# Health Endpoint
+# ==================================================
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({
+        "status": "healthy"
+    }), 200
+
+
+# ==================================================
+# Database Health Endpoint
+# ==================================================
+
+@app.route("/db-health", methods=["GET"])
+def db_health():
+
+    conn = None
+
+    try:
+        conn = get_connection()
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            result = cur.fetchone()
+
+        return jsonify({
+            "database": "healthy",
+            "result": result[0]
+        }), 200
+
+    except Exception as e:
+        logger.exception("DB health check failed")
+
+        return jsonify({
+            "database": "unhealthy",
+            "error": str(e)
+        }), 500
+
+    finally:
+        if conn:
+            release_connection(conn)
+
+
+# ==================================================
+# Create Item
+# ==================================================
+
 @app.route("/items", methods=["POST"])
 def create_item():
+
     data = request.get_json()
-    if not data or not data.get("name"):
-        return jsonify({"error": "name is required"}), 400
+
+    if not data:
+        return jsonify({
+            "error": "Request body required"
+        }), 400
 
     name = data.get("name")
     description = data.get("description")
-    
+
+    if not name:
+        return jsonify({
+            "error": "name is required"
+        }), 400
+
     conn = get_connection()
+
     try:
+
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
             cur.execute(
-                "INSERT INTO test_items(name, description) VALUES (%s, %s) RETURNING *;",
+                """
+                INSERT INTO test_items(name, description)
+                VALUES (%s, %s)
+                RETURNING *;
+                """,
                 (name, description)
             )
-            item = cur.fetchone()
-            conn.commit() # Commit only on clean success
-        return jsonify(item), 201
-    except Exception as e:
-        conn.rollback() # CRITICAL: If SQL fails, rollback to save the connection state
-        logger.error(f"Database write error: {e}")
-        return jsonify({"error": "Internal database error"}), 500
+
+            row = cur.fetchone()
+            conn.commit()
+
+        return jsonify(row), 201
+
     finally:
         release_connection(conn)
 
-# Keep the bottom clean for Gunicorn compatibility
+
+# ==================================================
+# Get All Items
+# ==================================================
+
+@app.route("/items", methods=["GET"])
+def get_items():
+
+    conn = get_connection()
+
+    try:
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+            cur.execute("""
+                SELECT *
+                FROM test_items
+                ORDER BY id;
+            """)
+
+            rows = cur.fetchall()
+
+        return jsonify(rows), 200
+
+    finally:
+        release_connection(conn)
+
+
+# ==================================================
+# Get Item By ID
+# ==================================================
+
+@app.route("/items/<int:item_id>", methods=["GET"])
+def get_item(item_id):
+
+    conn = get_connection()
+
+    try:
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+            cur.execute(
+                """
+                SELECT *
+                FROM test_items
+                WHERE id = %s;
+                """,
+                (item_id,)
+            )
+
+            row = cur.fetchone()
+
+        if not row:
+            return jsonify({
+                "error": "Item not found"
+            }), 404
+
+        return jsonify(row), 200
+
+    finally:
+        release_connection(conn)
+
+
+# ==================================================
+# Update Item
+# ==================================================
+
+@app.route("/items/<int:item_id>", methods=["PUT"])
+def update_item(item_id):
+
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            "error": "Request body required"
+        }), 400
+
+    name = data.get("name")
+    description = data.get("description")
+
+    conn = get_connection()
+
+    try:
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+            cur.execute(
+                """
+                UPDATE test_items
+                SET name = %s,
+                    description = %s
+                WHERE id = %s
+                RETURNING *;
+                """,
+                (name, description, item_id)
+            )
+
+            updated = cur.fetchone()
+            conn.commit()
+
+        if not updated:
+            return jsonify({
+                "error": "Item not found"
+            }), 404
+
+        return jsonify(updated), 200
+
+    finally:
+        release_connection(conn)
+
+
+# ==================================================
+# Delete Item
+# ==================================================
+
+@app.route("/items/<int:item_id>", methods=["DELETE"])
+def delete_item(item_id):
+
+    conn = get_connection()
+
+    try:
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                DELETE FROM test_items
+                WHERE id = %s;
+                """,
+                (item_id,)
+            )
+
+            deleted_rows = cur.rowcount
+
+            conn.commit()
+
+        if deleted_rows == 0:
+            return jsonify({
+                "error": "Item not found"
+            }), 404
+
+        return jsonify({
+            "message": "Item deleted"
+        }), 200
+
+    finally:
+        release_connection(conn)
+
+
+# ==================================================
+# Application Startup
+# ==================================================
+
+initialize_pool()
+create_table_if_not_exists()
+
+
+# ==================================================
+# Main
+# ==================================================
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=APP_PORT)
+    app.run(
+        host="0.0.0.0",
+        port=APP_PORT
+    )
