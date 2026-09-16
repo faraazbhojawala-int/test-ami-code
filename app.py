@@ -133,6 +133,13 @@ def create_table_if_not_exists():
     finally:
         release_connection(conn)
 
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({
+        "status": "healthy",
+        "message": "API is running"
+    }), 200
+
 
 # ==================================================
 # Health Endpoint
