@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure File Pipeline PoC</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Enforce strict flat sharp corners globally */
+        *, ::before, ::after {
+            border-radius: 0 !important;
+        }
+    </style>
+</head>
+<body class="bg-[#0a0a0a] text-neutral-200 min-h-screen font-sans antialiased selection:bg-white selection:text-black">
+
+    <!-- Top Navigation -->
+    <header class="border-b border-neutral-800 bg-[#0a0a0a] sticky top-0 z-50">
+        <div class="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between">
+            <h1 class="font-bold text-xs tracking-widest text-white uppercase">File Compress & Encrypt Pipeline PoC (Terraform)</h1>
+            <div id="user-badge" class="hidden items-center gap-4 text-xs">
+                <span class="text-neutral-400">User: <strong id="display-username" class="text-white font-semibold"></strong></span>
+                <button onclick="logout()" class="border border-neutral-700 px-3 py-1 hover:border-white hover:text-white transition uppercase tracking-wider text-neutral-300">Logout</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-6 py-12">
+
+        <!-- CONFIGURATION BAR (API BASE URL) -->
+        <div class="mb-10 border border-neutral-800 p-4 flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#111]">
+            <div class="w-full sm:w-auto flex-1">
+                <label class="block text-[10px] uppercase tracking-wider text-neutral-400 font-semibold mb-1">API Base URL</label>
+                <input type="text" id="api-base-url" value="http://localhost:5000" class="w-full bg-[#0a0a0a] border border-neutral-700 text-white px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-white transition">
+            </div>
+            <div class="text-xs font-mono text-neutral-400 self-end sm:self-center">
+                STATUS: <span id="api-status" class="font-bold text-neutral-500">CHECKING...</span>
+            </div>
+        </div>
+
+        <!-- AUTH SECTION -->
+        <section id="auth-section" class="grid md:grid-cols-2 gap-8 max-w-2xl mx-auto">
+            <!-- Login Box -->
+            <div class="border border-neutral-800 p-6 bg-[#111]">
+                <h2 class="text-xs font-bold uppercase tracking-widest text-white mb-4 pb-2 border-b border-neutral-800">Sign In</h2>
+                <form id="login-form" onsubmit="handleLogin(event)" class="space-y-4">
+                    <div>
+                        <label class="block text-[10px] uppercase tracking-wider text-neutral-400 mb-1">Username</label>
+                        <input type="text" id="login-username" required class="w-full bg-[#0a0a0a] border border-neutral-700 text-white px-3 py-2 text-xs focus:outline-none focus:border-white">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] uppercase tracking-wider text-neutral-400 mb-1">Password</label>
+                        <input type="password" id="login-password" required class="w-full bg-[#0a0a0a] border border-neutral-700 text-white px-3 py-2 text-xs focus:outline-none focus:border-white">
+                    </div>
+                    <button type="submit" class="w-full bg-white text-black font-medium py-2 text-xs uppercase tracking-wider hover:bg-neutral-200 transition">Sign In</button>
+                </form>
+            </div>
+
+            <!-- Register Box -->
+            <div class="border border-neutral-800 p-6 bg-[#111]">
+                <h2 class="text-xs font-bold uppercase tracking-widest text-white mb-4 pb-2 border-b border-neutral-800">Register</h2>
+                <form id="register-form" onsubmit="handleRegister(event)" class="space-y-4">
+                    <div>
+                        <label class="block text-[10px] uppercase tracking-wider text-neutral-400 mb-1">Username</label>
+                        <input type="text" id="reg-username" required class="w-full bg-[#0a0a0a] border border-neutral-700 text-white px-3 py-2 text-xs focus:outline-none focus:border-white">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] uppercase tracking-wider text-neutral-400 mb-1">Password</label>
+                        <input type="password" id="reg-password" required class="w-full bg-[#0a0a0a] border border-neutral-700 text-white px-3 py-2 text-xs focus:outline-none focus:border-white">
+                    </div>
+                    <button type="submit" class="w-full border border-neutral-600 text-white font-medium py-2 text-xs uppercase tracking-wider hover:border-white transition">Create Account</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- DASHBOARD SECTION -->
+        <section id="dashboard-section" class="hidden space-y-12">
+            
+            <!-- Upload Panel -->
+            <div class="border border-neutral-800 p-6 bg-[#111]">
+                <h2 class="text-xs font-bold uppercase tracking-widest text-white mb-4 pb-2 border-b border-neutral-800">Upload & Process File</h2>
+                <form id="upload-form" onsubmit="handleUpload(event)" class="grid md:grid-cols-4 gap-4 items-end">
+                    <div class="md:col-span-4">
+                        <label class="block text-[10px] uppercase tracking-wider text-neutral-400 mb-1">Select File</label>
+                        <input type="file" id="file-input" required class="w-full text-xs text-neutral-400 file:mr-4 file:py-2 file:px-4 file:border-0 file:text-xs file:font-semibold file:bg-white file:text-black hover:file:bg-neutral-200 cursor-pointer border border-neutral-700 bg-[#0a0a0a]">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] uppercase tracking-wider text-neutral-400 mb-1">Compression</label>
+                        <select id="compression-method" class="w-full bg-[#0a0a0a] border border-neutral-700 text-white px-3 py-2 text-xs focus:outline-none focus:border-white">
+                            <option value="none">None</option>
+                            <option value="gzip" selected>Gzip</option>
+                            <option value="zlib">Zlib</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] uppercase tracking-wider text-neutral-400 mb-1">Encryption</label>
+                        <select id="encryption-method" onchange="toggleKeyInput()" class="w-full bg-[#0a0a0a] border border-neutral-700 text-white px-3 py-2 text-xs focus:outline-none focus:border-white">
+                            <option value="none" selected>None</option>
+                            <option value="fernet">Fernet</option>
+                        </select>
+                    </div>
+                    <div id="key-container" class="hidden">
+                        <label class="block text-[10px] uppercase tracking-wider text-neutral-400 mb-1">Key (Base64)</label>
+                        <input type="text" id="encryption-key" placeholder="32-byte fernet key" class="w-full bg-[#0a0a0a] border border-neutral-700 text-white px-3 py-2 text-xs focus:outline-none focus:border-white">
+                    </div>
+                    <div>
+                        <button type="submit" id="upload-btn" class="w-full bg-white text-black py-2 text-xs uppercase tracking-wider hover:bg-neutral-200 transition font-medium">Upload File</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Files Inventory Panel -->
+            <div class="border border-neutral-800 p-6 bg-[#111]">
+                <div class="flex items-center justify-between mb-4 pb-2 border-b border-neutral-800">
+                    <h2 class="text-xs font-bold uppercase tracking-widest text-white">File Inventory</h2>
+                    <button onclick="loadFiles()" class="text-[10px] uppercase tracking-wider text-neutral-400 hover:text-white transition">Refresh</button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="border-b border-neutral-800 text-neutral-400 uppercase tracking-wider text-[10px]">
+                                <th class="py-3 px-3">Filename</th>
+                                <th class="py-3 px-3">Stored Compression</th>
+                                <th class="py-3 px-3">Stored Encryption</th>
+                                <th class="py-3 px-3">Download Preferences</th>
+                                <th class="py-3 px-3 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="file-table-body" class="divide-y divide-neutral-900">
+                            <tr>
+                                <td colspan="5" class="py-6 text-center text-neutral-500 font-mono">LOADING FILES...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- Toast Notification Banner -->
+        <div id="toast" class="fixed bottom-6 right-6 hidden bg-white text-black px-4 py-3 text-xs tracking-wider uppercase font-semibold shadow-2xl border border-neutral-700 z-50"></div>
+
+    </main>
+
+    <!-- Client Script Logic -->
+    <script>
+        let currentUser = null;
+
+        function getApiUrl() {
+            return document.getElementById("api-base-url").value.trim().replace(/\/+$/, "");
+        }
+
+        async function checkHealth() {
+            try {
+                const res = await fetch(`${getApiUrl()}/health`);
+                const statusEl = document.getElementById("api-status");
+                if (res.ok) {
+                    statusEl.innerText = "ONLINE";
+                    statusEl.className = "font-bold text-white";
+                } else {
+                    throw new Error();
+                }
+            } catch {
+                const statusEl = document.getElementById("api-status");
+                statusEl.innerText = "OFFLINE";
+                statusEl.className = "font-bold text-neutral-500";
+            }
+        }
+        setInterval(checkHealth, 5000);
+        checkHealth();
+
+        function showToast(message, isError = false) {
+            const toast = document.getElementById("toast");
+            toast.innerText = message;
+            toast.className = `fixed bottom-6 right-6 ${isError ? 'bg-[#1a0505] border-red-800 text-red-400' : 'bg-white text-black'} px-4 py-3 text-xs tracking-wider uppercase font-semibold z-50`;
+            toast.classList.remove("hidden");
+            setTimeout(() => toast.classList.add("hidden"), 4000);
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            const username = document.getElementById("reg-username").value;
+            const password = document.getElementById("reg-password").value;
+
+            try {
+                const res = await fetch(`${getApiUrl()}/register`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || "Registration failed");
+                showToast("Registration successful. Please log in.");
+                document.getElementById("register-form").reset();
+            } catch (err) {
+                showToast(err.message, true);
+            }
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const username = document.getElementById("login-username").value;
+            const password = document.getElementById("login-password").value;
+
+            try {
+                const res = await fetch(`${getApiUrl()}/login`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || "Login failed");
+
+                currentUser = { id: data.user_id, username: data.username, password: password };
+                
+                document.getElementById("auth-section").classList.add("hidden");
+                document.getElementById("dashboard-section").classList.remove("hidden");
+                document.getElementById("user-badge").classList.remove("hidden");
+                document.getElementById("user-badge").classList.add("flex");
+                document.getElementById("display-username").innerText = currentUser.username;
+
+                showToast("Authenticated successfully.");
+                loadFiles();
+            } catch (err) {
+                showToast(err.message, true);
+            }
+        }
+
+        function logout() {
+            currentUser = null;
+            document.getElementById("auth-section").classList.remove("hidden");
+            document.getElementById("dashboard-section").classList.add("hidden");
+            document.getElementById("user-badge").classList.add("hidden");
+            document.getElementById("user-badge").classList.remove("flex");
+            showToast("Logged out.");
+        }
+
+        function toggleKeyInput() {
+            const method = document.getElementById("encryption-method").value;
+            const container = document.getElementById("key-container");
+            if (method === "fernet") {
+                container.classList.remove("hidden");
+            } else {
+                container.classList.add("hidden");
+            }
+        }
+
+        async function handleUpload(e) {
+            e.preventDefault();
+            const fileInput = document.getElementById("file-input");
+            if (fileInput.files.length === 0) return;
+
+            const formData = new FormData();
+            formData.append("user_id", currentUser.id);
+            formData.append("password", currentUser.password);
+            formData.append("file", fileInput.files[0]);
+            formData.append("compression_method", document.getElementById("compression-method").value);
+            formData.append("encryption_method", document.getElementById("encryption-method").value);
+            formData.append("encryption_key", document.getElementById("encryption-key").value);
+
+            const btn = document.getElementById("upload-btn");
+            btn.innerText = "UPLOADING...";
+            btn.disabled = true;
+
+            try {
+                const res = await fetch(`${getApiUrl()}/upload`, {
+                    method: "POST",
+                    body: formData
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || "Upload failed");
+
+                showToast("File processed and archived successfully.");
+                document.getElementById("upload-form").reset();
+                toggleKeyInput();
+                loadFiles();
+            } catch (err) {
+                showToast(err.message, true);
+            } finally {
+                btn.innerText = "Upload File";
+                btn.disabled = false;
+            }
+        }
+
+        async function loadFiles() {
+            const tbody = document.getElementById("file-table-body");
+            tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-neutral-500 font-mono">LOADING FILES...</td></tr>`;
+
+            try {
+                const res = await fetch(`${getApiUrl()}/files`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username: currentUser.username, password: currentUser.password })
+                });
+                const files = await res.json();
+                if (!res.ok) throw new Error(files.error || "Failed to load files");
+
+                if (files.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-neutral-500 font-mono">NO FILES FOUND.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = files.map(f => {
+                    const needsKey = f.encryption_method !== "none";
+                    return `
+                        <tr class="hover:bg-[#151515] transition align-top">
+                            <td class="py-3 px-3 font-mono text-white">
+                                <div>${f.filename}</div>
+                                <div class="text-[10px] text-neutral-500 mt-0.5">${f.file_size} BYTES</div>
+                            </td>
+                            <td class="py-3 px-3 font-mono text-neutral-400">${f.compression_method}</td>
+                            <td class="py-3 px-3 font-mono text-neutral-400">${f.encryption_method}</td>
+                            <td class="py-3 px-3 space-y-2">
+                                <label class="flex items-center gap-2 cursor-pointer text-neutral-300">
+                                    <input type="checkbox" id="decompress-${f.id}" checked class="accent-white">
+                                    Decompress (${f.compression_method})
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer text-neutral-300">
+                                    <input type="checkbox" id="decrypt-${f.id}" checked class="accent-white">
+                                    Decrypt (${f.encryption_method})
+                                </label>
+                                ${needsKey ? `
+                                    <input type="text" id="key-${f.id}" placeholder="Enter decryption key" class="w-full bg-[#0a0a0a] border border-neutral-700 text-white px-2 py-1 text-xs font-mono focus:outline-none focus:border-white">
+                                ` : ''}
+                            </td>
+                            <td class="py-3 px-3 text-right">
+                                <button onclick="downloadFile(${f.id})" class="border border-neutral-700 px-3 py-1.5 hover:border-white hover:text-white transition uppercase tracking-wider text-[11px] text-neutral-300">Download</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join("");
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-red-400 font-mono">ERROR LOADING FILES</td></tr>`;
+                showToast(err.message, true);
+            }
+        }
+
+        async function downloadFile(fileId) {
+            const decompressChecked = document.getElementById(`decompress-${fileId}`).checked;
+            const decryptChecked = document.getElementById(`decrypt-${fileId}`).checked;
+            
+            let encKey = "";
+            const keyInput = document.getElementById(`key-${fileId}`);
+            if (keyInput) {
+                encKey = keyInput.value.trim();
+                if (decryptChecked && !encKey) {
+                    showToast("Encryption key required for decryption.", true);
+                    return;
+                }
+            }
+
+            try {
+                showToast("Requesting download stream...");
+                const res = await fetch(`${getApiUrl()}/download-file`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        username: currentUser.username,
+                        password: currentUser.password,
+                        file_id: fileId,
+                        decrypt: decryptChecked,
+                        decompress: decompressChecked,
+                        encryption_key: encKey
+                    })
+                });
+
+                if (!res.ok) {
+                    const errData = await res.json();
+                    throw new Error(errData.error || "Download failed");
+                }
+
+                const blob = await res.blob();
+                const disposition = res.headers.get("Content-Disposition");
+                let filename = "downloaded_file";
+                if (disposition && disposition.includes("filename=")) {
+                    filename = disposition.split("filename=")[1].replace(/["']/g, "").trim();
+                }
+
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                showToast("File downloaded successfully.");
+            } catch (err) {
+                showToast(err.message, true);
+            }
+        }
+    </script>
+</body>
+</html>
