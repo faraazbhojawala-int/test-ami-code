@@ -48,7 +48,7 @@ else:
             }
         }
     )
-    
+
 def get_db_secret():
     client = boto3.client("secretsmanager", region_name=AWS_REGION)
     response = client.get_secret_value(SecretId=DB_SECRET_ARN)
@@ -160,6 +160,14 @@ def decrypt_data(data: bytes, method: str, key: str) -> bytes:
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "healthy"}), 200
+
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({
+        "status": "healthy",
+        "message": "API is running"
+    }), 200
+
 
 @app.route("/register", methods=["POST"])
 def register():
